@@ -26,9 +26,9 @@ See some details at: tmp1_linuxport.TXT , tmp2_fordisks.TXT.
 
 //--- Title string ---
 #ifdef __x86_64__
-#define TITLE "Memory-mapped files benchmark for Linux 64.\n(C)2017 IC Book Labs. v0.05"
+#define TITLE "Memory-mapped files benchmark for Linux 64.\n(C)2018 IC Book Labs. v0.06"
 #else
-#define TITLE "Memory-mapped files benchmark for Linux 32.\n(C)2017 IC Book Labs. v0.05"
+#define TITLE "Memory-mapped files benchmark for Linux 32.\n(C)2018 IC Book Labs. v0.06"
 #endif
 
 //--- Defaults definitions ---
@@ -610,6 +610,9 @@ for ( i=0; print_control[i].name!=NULL; i++ )
 //---
 void handlerProgress( char stepName[], int stepNumber, double statArray[] )
     {
+		
+	double currentMBPS = statArray[stepNumber];
+	
     calculateStatistics( statArray, stepNumber + 1,
                         &resultMedian, &resultAverage,
                         &resultMinimum, &resultMaximum );
@@ -649,7 +652,9 @@ void handlerProgress( char stepName[], int stepNumber, double statArray[] )
     printf( " %-6d%-11s%8.3f%11.3f%11.3f%11.3f%11.3f\n",
             stepNumber+1,
 	    stepName,
-	    statArray[stepNumber],
+	    // statArray[stepNumber],
+	    currentMBPS,
+	    //
 	    resultMedian,
 	    resultAverage,
 	    resultMinimum,
