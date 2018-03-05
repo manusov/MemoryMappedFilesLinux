@@ -26,9 +26,9 @@ See some details at: tmp1_linuxport.TXT , tmp2_fordisks.TXT.
 
 //--- Title string ---
 #ifdef __x86_64__
-#define TITLE "Memory-mapped files benchmark for Linux 64.\n(C)2018 IC Book Labs. v0.06"
+#define TITLE "Memory-mapped files benchmark for Linux 64.\n(C)2018 IC Book Labs. v0.07"
 #else
-#define TITLE "Memory-mapped files benchmark for Linux 32.\n(C)2018 IC Book Labs. v0.06"
+#define TITLE "Memory-mapped files benchmark for Linux 32.\n(C)2018 IC Book Labs. v0.07"
 #endif
 
 //--- Defaults definitions ---
@@ -109,7 +109,7 @@ static int status = 0;
 
 //--- Strings ---
 static char sPath[]     = "path"     ,  // this for command line options names detect
-			sSize[]     = "size"     ,
+            sSize[]     = "size"     ,
             sWdelay[]   = "wdelay"   ,
             sRdelay[]   = "rdelay"   ,
             sRepeats[]  = "repeats"  ,
@@ -141,8 +141,8 @@ typedef struct
 static OPTION_ENTRY ipb_list[] =
     {
         { sPath    ,  NULL ,  0 ,  &filePath   ,  STRPARM },
-	{ sSize    ,  NULL ,  0 ,  &fileSize   ,  MEMPARM },
-	{ sWdelay  ,  NULL ,  0 ,  &writeDelay ,  INTPARM },
+        { sSize    ,  NULL ,  0 ,  &fileSize   ,  MEMPARM },
+        { sWdelay  ,  NULL ,  0 ,  &writeDelay ,  INTPARM },
         { sRdelay  ,  NULL ,  0 ,  &readDelay  ,  INTPARM },
         { sRepeats ,  NULL ,  0 ,  &repeats    ,  INTPARM },
         { NULL     ,  NULL ,  0 ,  NULL        ,  NOOPT   }
@@ -164,7 +164,7 @@ static PRINT_ENTRY tpb_list[] =
     {
         { ssPath    ,  NULL ,  &filePath   ,  STRNG    },
         { ssSize    ,  NULL ,  &fileSize   ,  MEMSIZE  },
-	{ ssWdelay  ,  NULL ,  &writeDelay ,  VINTEGER },
+        { ssWdelay  ,  NULL ,  &writeDelay ,  VINTEGER },
         { ssRdelay  ,  NULL ,  &readDelay  ,  VINTEGER },
         { ssRepeats ,  NULL ,  &repeats    ,  VINTEGER },
         { NULL      ,  NULL ,  0           ,  NOPRN    }
@@ -180,6 +180,39 @@ static PRINT_ENTRY opb_list[] =
         { sMaximum    , NULL    , &resultMaximum    , VDOUBLE  },
         { NULL        , NULL    , 0                 , NOPRN    }
     };
+
+
+//--- Helper method, get and print Linux application resource usage statistics ---
+void printResourceStatistics()
+{
+struct rusage usage;
+int usageStatus = 0;
+int why = RUSAGE_SELF;
+usageStatus = getrusage ( why, &usage );
+if ( usageStatus < 0 )
+    {
+    printf ( "Get resource usage failed ( %s )\n" , strerror(errno) );
+    exit(2);
+    }
+printf ( "User space CPU time used: %ld sec %ld usec\n", 
+         (long)(usage.ru_utime.tv_sec), (long)(usage.ru_utime.tv_usec) );
+printf ( "System space CPU time used: %ld sec %ld usec\n", 
+         (long)(usage.ru_stime.tv_sec), (long)(usage.ru_stime.tv_usec) );
+printf ( "Maximum resident set size        = %ld KB\n", usage.ru_maxrss );
+printf ( "Integral shared memory size      = %ld KB\n", usage.ru_ixrss );
+printf ( "Integral unshared data size      = %ld KB\n", usage.ru_idrss );
+printf ( "Integral unshared stack size     = %ld KB\n", usage.ru_isrss );
+printf ( "Page reclaims (soft page faults) = %ld\n", usage.ru_minflt );
+printf ( "Page faults (hard page faults)   = %ld\n", usage.ru_majflt );
+printf ( "Swaps                            = %ld\n", usage.ru_nswap );
+printf ( "Block input operations           = %ld\n", usage.ru_inblock );
+printf ( "Block output operations          = %ld\n", usage.ru_oublock );
+printf ( "IPC messages sent                = %ld\n", usage.ru_msgsnd );
+printf ( "IPC messages received            = %ld\n", usage.ru_msgrcv );
+printf ( "Signals received                 = %ld\n", usage.ru_nsignals );
+printf ( "Voluntary context switches       = %ld\n", usage.ru_nvcsw );
+printf ( "Involuntary context switches     = %ld\n", usage.ru_nivcsw );
+}
 
 //--- Helper method for print memory size: bytes/KB/MB/GB, to scratch string ---
 // INPUT:   scratchPointer = pointer to destination string
@@ -1096,6 +1129,10 @@ calculateStatistics(  readLog, repeats,
                      &resultMedian, &resultAverage,
                      &resultMinimum, &resultMaximum );
 handlerOutput( opb_list, OPB_TABS );
+
+//--- Print application statistics by OS info ---
+printf ( "\nApplication statistics:\n" );
+printResourceStatistics();
     
 //--- Exit ---
 printf( "\nDone.\n" );
