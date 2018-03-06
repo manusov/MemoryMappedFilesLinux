@@ -3,6 +3,7 @@
 Memory-mapped files benchmark for Linux 32/64.
 Privileged user required (sudo).
 
+
 run:
 
 "sudo ./mapfile [options]"
@@ -21,6 +22,7 @@ rdelay=value    , delay from write end to read, milliseconds
 
 repeats=value   , number of times to repeat test, for measurement
 
+
 run examples (default and custom):
 
 "sudo ./mapfile"
@@ -32,9 +34,9 @@ size is 100 kilobytes
 
 wait write synchronization not used
 
-delay before read is 3 milliseconds
+delay before write is 3 milliseconds
 
-delay before write is 5 milliseconds
+delay before read is 5 milliseconds
 
 2 measurement repeats
 
