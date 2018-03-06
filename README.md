@@ -26,6 +26,7 @@ repeats=value   , number of times to repeat test, for measurement
 run examples (default and custom):
 
 "sudo ./mapfile"
+
 "sudo ./mapfile path=myfile.bin size=100K wsync=0 wdelay=3 rdelay=5 repeats=2"
 
 File name is myfile.bin
