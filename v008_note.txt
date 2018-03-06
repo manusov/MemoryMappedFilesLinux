@@ -1,0 +1,1 @@
+Add write synchronization, wsync option by fsync(file_handle) API.

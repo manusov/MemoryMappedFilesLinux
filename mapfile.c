@@ -1,7 +1,27 @@
 /*
-Memory mapped file io test. (C) IC Book Labs.
-IPB/TPB/OPB communication sample.
-See some details at: tmp1_linuxport.TXT , tmp2_fordisks.TXT.
+
+Memory mapped file mass storage benchmarks. (C)2018 IC Book Labs.
+Designed as IPB/TPB/OPB communication sample,
+IPB=Input Parameters Block, OPB=Output Parameters Block, TPB=Transit Parameters Block
+
+run:
+
+sudo ./mapfile [options]
+
+options list:
+
+path=<file path>  , target file path and name, default myfile.bin in the current directory
+size=<block size> , default 1GB, default units=bytes (possible K/M/G), examples: 10240, 16K, 20M, 1G
+wsync=<0|1>       , don't synchronize write(0), synchronize(1), default=synchronize(1)
+wdelay=<value>    , delay from start to write, milliseconds
+rdelay=<value>    , delay from write end to read, milliseconds
+repeats=<value>   , number of times to repeat test, for measurement
+
+examples (default and custom)
+
+sudo ./mapfile
+sudo ./mapfile path=aaa.bin size=100K wsync=0 wdelay=1000 rdelay=3000 repeats=3
+
 */
 
 #define _GNU_SOURCE
@@ -26,14 +46,15 @@ See some details at: tmp1_linuxport.TXT , tmp2_fordisks.TXT.
 
 //--- Title string ---
 #ifdef __x86_64__
-#define TITLE "Memory-mapped files benchmark for Linux 64.\n(C)2018 IC Book Labs. v0.07"
+#define TITLE "Memory-mapped files benchmark for Linux 64.\n(C)2018 IC Book Labs. v0.08"
 #else
-#define TITLE "Memory-mapped files benchmark for Linux 32.\n(C)2018 IC Book Labs. v0.07"
+#define TITLE "Memory-mapped files benchmark for Linux 32.\n(C)2018 IC Book Labs. v0.08"
 #endif
 
 //--- Defaults definitions ---
-#define FILE_PATH   "myfile.bin"    // default file path and name
+#define FILE_PATH   "myfile.bin"       // default file path and name
 #define FILE_SIZE   1024*1024*1024     // default file size, bytes
+#define WSYNC_MODE  1                  // default write synchronization mode
 #define WRITE_DELAY 100                // default delay from Start to Write in milliseconds, argument of Sleep()
 #define READ_DELAY  100                // default delay from Write end to Read in milliseconds, argument of Sleep()
 #define MEASURE_REPEATS 5              // default number of measurement repeats
@@ -41,21 +62,22 @@ See some details at: tmp1_linuxport.TXT , tmp2_fordisks.TXT.
 //--- Limits definitions ---
 #define FILE_SIZE_MIN  4096            // minimum file size 4096 bytes
 #define FILE_SIZE_MAX  1536*1024*1024  // maximum file size 1.5 gigabytes
+#define WSYNC_NO       0               // additional write synchronization don't used
+#define WSYNC_YES      1               // additional write synchronization used
 #define DELAY_MIN      0               // minimum delay value, 0 milliseconds
 #define DELAY_MAX      100000          // maximum delay value, 100000 milliseconds = 100 seconds
 #define REPEATS_MIN    0               // minimum number of measurement repeats
 #define REPEATS_MAX    100             // maximum number of measurement repeats
 
 //--- Memory allocation constants ---
-#define BUFFER_SIZE 1024*1024           // buffer size for file create only
-#define BUFFER_ALIGNMENT 4096           // alignment factor, 4KB is page size for x86/x64
+#define BUFFER_SIZE 1024*1024          // buffer size for file create only
+#define BUFFER_ALIGNMENT 4096          // alignment factor, 4KB is page size for x86/x64
 
 //--- Timer constant ---
-#define TIME_TO_SECONDS 0.000000001  // multiply by this to convert 1 nanosecond units to 1 second
+#define TIME_TO_SECONDS 0.000000001    // multiply by this to convert 1 nanosecond units to 1 second
 
 //--- Page walk constant ---
-// #define PAGE_WALK_STEP 512        // step for cause swapping, page=4096 bytes but sector=512 bytes, make safe, actual only for READ
-#define PAGE_WALK_STEP 4096
+#define PAGE_WALK_STEP 4096            // step for cause swapping, page=4096 bytes but sector=512 bytes
 
 //--- Output tabulation options ---
 #define IPB_TABS  18    // number of chars before "=" for tabulation, this used for start conditions (input parameters block)
@@ -65,6 +87,7 @@ See some details at: tmp1_linuxport.TXT , tmp2_fordisks.TXT.
 static char    fileDefaultPath[] = FILE_PATH;   // constant string for references
 static char*   filePath   = fileDefaultPath;    // pointer to file path string
 static size_t  fileSize   = FILE_SIZE;          // file size, bytes
+static int     wsyncMode  = WSYNC_YES;          // additional write synchronization option
 static int     writeDelay = WRITE_DELAY;        // delay from start to write, milliseconds
 static int     readDelay  = READ_DELAY;         // delay from write end to read, milliseconds
 static int     repeats    = MEASURE_REPEATS;    // number of times to repeat test, for measurement precision
@@ -110,12 +133,14 @@ static int status = 0;
 //--- Strings ---
 static char sPath[]     = "path"     ,  // this for command line options names detect
             sSize[]     = "size"     ,
+            sWsync[]    = "wsync"    ,
             sWdelay[]   = "wdelay"   ,
             sRdelay[]   = "rdelay"   ,
             sRepeats[]  = "repeats"  ,
             
             ssPath[]    = "file path"         ,    // this for start conditions visual
             ssSize[]    = "file size"         ,
+            ssWsync[]   = "wait write sync"   ,
             ssWdelay[]  = "write delay (ms)"  ,
             ssRdelay[]  = "read delay (ms)"   ,
             ssRepeats[] = "repeat times"      ,
@@ -130,7 +155,7 @@ typedef enum
     { NOOPT, INTPARM, MEMPARM, SELPARM, STRPARM } OPTION_TYPES;
 typedef struct
     {
-    char* name;             // pointer to parm. name for recognition NAME=VALUE
+    char* name;             // pointer to parm. name string for recognition NAME=VALUE
     char** values;          // pointer to array of strings pointers, text opt.
     int n_values;           // number of strings for text option recognition
     void* data;             // pointer to updated option variable
@@ -142,6 +167,7 @@ static OPTION_ENTRY ipb_list[] =
     {
         { sPath    ,  NULL ,  0 ,  &filePath   ,  STRPARM },
         { sSize    ,  NULL ,  0 ,  &fileSize   ,  MEMPARM },
+        { sWsync   ,  NULL ,  0 ,  &wsyncMode  ,  INTPARM },
         { sWdelay  ,  NULL ,  0 ,  &writeDelay ,  INTPARM },
         { sRdelay  ,  NULL ,  0 ,  &readDelay  ,  INTPARM },
         { sRepeats ,  NULL ,  0 ,  &repeats    ,  INTPARM },
@@ -164,6 +190,7 @@ static PRINT_ENTRY tpb_list[] =
     {
         { ssPath    ,  NULL ,  &filePath   ,  STRNG    },
         { ssSize    ,  NULL ,  &fileSize   ,  MEMSIZE  },
+        { ssWsync   ,  NULL ,  &wsyncMode  ,  VINTEGER },
         { ssWdelay  ,  NULL ,  &writeDelay ,  VINTEGER },
         { ssRdelay  ,  NULL ,  &readDelay  ,  VINTEGER },
         { ssRepeats ,  NULL ,  &repeats    ,  VINTEGER },
@@ -361,11 +388,8 @@ char* pValue = NULL;            // pointer to sub-string VALUE
 char* pPattern = NULL;          // pointer to compared pattern string
 char** pPatterns = NULL;        // pointer to pointer to pattern strings
 int* pInt = NULL;               // pointer to integer (32b) for variable store
-// long long* pLong = NULL;     // pointer to long (64b) for variable store
-// long long k64;               // transit variable for memory block size
-size_t* pSize = NULL;
-size_t kSize = 0;
-// bug fix 32/64
+size_t* pSize = NULL;           // transit pointer to block size, parse control
+size_t kSize = 0;               // transit value of block size, parse control
 char c = 0;                     // transit storage for char
 #define SMIN 3                  // minimum option string length, example a=b
 #define SMAX 81                 // maximum option string length
@@ -399,17 +423,8 @@ for ( i=1; i<pCount; i++ )      // cycle for command line options
     pValue = cmdValue;
     strcpy( pName, pAll );           // store option sub-string to pName
     strtok( pName, "=" );            // pName = pointer to fragment before "="
-	pValue = strtok( NULL, " " );    // pValue = pointer to fragment after "="
-	
-/* DEBUG	
-	printf("\npAll   = %s\n", pAll   );
-	printf("pName  = %s\n", pName  );
-	printf("pValue = %s\n\n", pValue );
-	//pValue = "aaaa";
-	pValue = "TEST_TEST";
-DEBUG */	
-	
-	// check option name and option value substrings
+    pValue = strtok( NULL, " " );    // pValue = pointer to fragment after "="
+    // check option name and option value substrings
     k1 = 0;
     k2 = 0;
     if ( pName  != NULL ) { k1 = strlen( pName );  }
@@ -419,6 +434,7 @@ DEBUG */
         printf( "ERROR, OPTION INVALID: %s\n", pAll );
         return 1;
         }
+
     // detect option by comparision from list, cycle for supported options
     for ( j=0; parse_control[j].name!=NULL; j++ )
         {
@@ -483,15 +499,10 @@ DEBUG */
                         return 1;
                         }
                     k = atoi( pValue );   // convert string to integer
-                    // k64 = k;
-                    // k64 *= k1;
-                    // pLong = (long long int *) parse_control[j].data;
-                    // *pLong = k64;
                     kSize = k;
                     kSize *= k1;
                     pSize = (size_t *) parse_control[j].data;
                     *pSize = kSize;
-                    // bug fix 32/64
                     break;
                     }
                 case SELPARM:    // support parameters selected from text names
@@ -519,10 +530,8 @@ DEBUG */
                     }
                 case STRPARM:    // support parameter as text string
                     {
-					pPatterns = (char **) parse_control[j].data;
-                    // *pPatterns = pValue;
+                    pPatterns = (char **) parse_control[j].data;
                     *pPatterns = pStrings[i] + k1 + 1;          // skip string before "=" and "=" char
-                    // fix bug with local variables destroyed
                     break;
                     }
                 }
@@ -643,59 +652,20 @@ for ( i=0; print_control[i].name!=NULL; i++ )
 //---
 void handlerProgress( char stepName[], int stepNumber, double statArray[] )
     {
-		
-	double currentMBPS = statArray[stepNumber];
-	
+    double currentMBPS = statArray[stepNumber];
     calculateStatistics( statArray, stepNumber + 1,
                         &resultMedian, &resultAverage,
                         &resultMinimum, &resultMaximum );
-/*
-    int i = 0;
-    int j = 8;
-    j -= printf ( " %d", stepNumber+1 );
-    for ( i=0; i<j; i++ ) { printf( " " ); }
-    
-    j = 11;
-    j -= printf ( "%s", stepName );
-    for ( i=0; i<j; i++ ) { printf( " " ); }
-    
-    j = 11;
-    j -= printf( "%.3f", statArray[stepNumber] );
-    for ( i=0; i<j; i++ ) { printf( " " ); }
-    
-    j = 11;
-    j -= printf( "%.3f", resultMedian );
-    for ( i=0; i<j; i++ ) { printf( " " ); }
-    
-    j = 11;
-    j -= printf( "%.3f", resultAverage );
-    for ( i=0; i<j; i++ ) { printf( " " ); }
-    
-    j = 11;
-    j -= printf( "%.3f", resultMinimum );
-    for ( i=0; i<j; i++ ) { printf( " " ); }
-    
-    j = 11;
-    j -= printf( "%.3f", resultMaximum );
-    for ( i=0; i<j; i++ ) { printf( " " ); }
-    
-    printf ( "\n" );
- */ 
- 
     printf( " %-6d%-11s%8.3f%11.3f%11.3f%11.3f%11.3f\n",
             stepNumber+1,
 	    stepName,
-	    // statArray[stepNumber],
 	    currentMBPS,
-	    //
 	    resultMedian,
 	    resultAverage,
 	    resultMinimum,
 	    resultMaximum
 	  );
-
     }
-
 
 //---------- Application entry point -------------------------------------------
 
@@ -723,9 +693,14 @@ if ( ( fileSize < FILE_SIZE_MIN ) | ( fileSize > FILE_SIZE_MAX ) )
     printf( "\n" );
     return 1;
     }
+if ( ( wsyncMode != WSYNC_NO ) & ( wsyncMode != WSYNC_YES ) )
+    {
+    printf("\nBAD PARAMETER: Write synchronization option must be %d or %d \n", WSYNC_NO, WSYNC_YES );
+    return 1;
+    }
 if ( ( writeDelay < DELAY_MIN ) | ( writeDelay > DELAY_MAX ) )
     {
-	printf("\nBAD PARAMETER: Write delay must be from %d to %d milliseconds\n", DELAY_MIN, DELAY_MAX );
+    printf("\nBAD PARAMETER: Write delay must be from %d to %d milliseconds\n", DELAY_MIN, DELAY_MAX );
     return 1;
     }
 if ( ( readDelay < DELAY_MIN ) | ( readDelay > DELAY_MAX ) )
@@ -758,52 +733,16 @@ for ( rep=0; rep<REPEATS_MAX; rep++ )
 	writeLog[rep] = 0.0;
 	}
 
-
 //--- Cycle for measurement repeats ---
 printf( "\nStart benchmarking.\n" );
 printf( "Pass | Operation | MBPS     | Median   | Average  | Minimum  | Maximum\n" );
 printf( "-------------------------------------------------------------------------\n\n" );
 
-
-/* // TEST DELAY WITH TIME MEASUREMENT
-status = clock_gettime( CLOCK_REALTIME, &ts1 );
-if( status != 0 )
-    {
-    printf( "get time error\n" );
-    return 1;
-    }
-int a = 500000;
-status = usleep( a );
-if ( status != 0 )
-    {
-    printf( "delay error\n" );
-    return 1;
-    }
-status = clock_gettime( CLOCK_REALTIME, &ts2 );
-if( status != 0 )
-    {
-    printf( "get time error\n" );
-    return 1;
-    }
-sec = ts2.tv_sec  - ts1.tv_sec;
-ns  = ts2.tv_nsec - ts1.tv_nsec;
-seconds = ns;
-seconds /= 1000000000.0;
-seconds += sec;
-printf ( "delta seconds = %.3f", seconds );
-// END TEST DELAY WITH TIME MEASUREMENT  */
-
-
-
 //--- Cycle for WRITE --------------------------------------------------
 
 for ( rep=0; rep<repeats; rep++ )
     {
-
-    //--- Create temporary file ---
-    // printf("\nPass %d create temporary file...\n", rep+1 );
-    // printf("Create temporary file...\n\n" );
-    //--- Allocate memory ---
+    //--- Start create temporary file, allocate memory ---
     bufSize = BUFFER_SIZE;
     diskData = memalign ( bufAlign, bufSize );
     if ( diskData<=0 )
@@ -856,7 +795,6 @@ for ( rep=0; rep<repeats; rep++ )
         }
     //--- Release memory ---
     free( diskData );
-
 
     //--- WRITE PHASE: Open file ---
     fileHandle = open ( filePath, openFlags );    // open file
@@ -900,14 +838,15 @@ for ( rep=0; rep<repeats; rep++ )
         walkLength += walkStep;
         }
     //--- WRITE PHASE: Flush memory to file ---
-    /*
-    status = fsync( fileHandle );
-    if ( status < 0 )
-        {
-        printf ( "\nFile flush error: %s ( %s )\n", filePath, strerror(errno) );
-        return 3;
-        }
-    */
+    if ( wsyncMode == 1 )
+	{
+        status = fsync( fileHandle );
+        if ( status < 0 )
+            {
+            printf ( "\nFile flush error: %s ( %s )\n", filePath, strerror(errno) );
+            return 3;
+            }
+         }
     //--- WRITE PHASE: Time measurement stop point ---
     status = clock_gettime( CLOCK_REALTIME, &ts2 );
     if( status != 0 )
@@ -924,13 +863,8 @@ for ( rep=0; rep<repeats; rep++ )
     megabytes = fileSize;
     megabytes /= 1048576.0;           // convert from bytes to megabytes
     mbps = megabytes / seconds;
-    //
-    // printf( "Pass %d write MBPS = %.3f\n", rep+1, mbps );
-    //
     writeLog[rep] = mbps;
-    //
     handlerProgress( "write", rep, writeLog );
-    //
     //--- WRITE PHASE: Unmap file ---
     status = munmap( mapPointer, mapLength );
     if ( status < 0 )
@@ -946,28 +880,21 @@ for ( rep=0; rep<repeats; rep++ )
         return 3;
         }
 
-	//--- WRITE PHASE: Delete file ---
-	status = remove( filePath );
+    //--- WRITE PHASE: Delete file ---
+    status = remove( filePath );
     if ( status < 0 )
-		{
-		printf ( "\nFile delete error: %s ( %s )\n", filePath, strerror(errno) );
-		return 3;
-		}
-
-    }
-
-
+        {
+        printf ( "\nFile delete error: %s ( %s )\n", filePath, strerror(errno) );
+        return 3;
+        }
+     }
 
 //--- Cycle for READ ---------------------------------------------------
 
 printf( "\n" );
 for ( rep=0; rep<repeats; rep++ )
     {
-
-    //--- Create temporary file ---
-    // printf("\nPass %d create temporary file...\n", rep+1 );
-    // printf("Create temporary file...\n\n" );
-    //--- Allocate memory ---
+    //--- Start create temporary file, allocate memory ---
     bufSize = BUFFER_SIZE;
     diskData = memalign ( bufAlign, bufSize );
     if ( diskData<=0 )
@@ -1021,7 +948,6 @@ for ( rep=0; rep<repeats; rep++ )
     //--- Release memory ---
     free( diskData );
 
-    
     //--- READ PHASE: Open file ---
     fileHandle = open ( filePath, openFlags );    // open file
     if ( fileHandle <= 0 )
@@ -1079,13 +1005,8 @@ for ( rep=0; rep<repeats; rep++ )
     megabytes = fileSize;
     megabytes /= 1048576.0;           // convert from bytes to megabytes
     mbps = megabytes / seconds;
-    //
-    // printf( "Pass %d read MBPS  = %.3f\n", rep+1, mbps );
-    //
     readLog[rep] = mbps;
-    //
     handlerProgress( "read", rep, readLog );
-    //
     //--- READ PHASE: Unmap file ---
     status = munmap( mapPointer, mapLength );
     if ( status < 0 )
@@ -1101,20 +1022,19 @@ for ( rep=0; rep<repeats; rep++ )
         return 3;
         }
 
-	//--- READ PHASE: Delete file ---
-	status = remove( filePath );
+    //--- READ PHASE: Delete file ---
+    status = remove( filePath );
     if ( status < 0 )
-		{
-		printf ( "\nFile delete error: %s ( %s )\n", filePath, strerror(errno) );
-		return 3;
-		}
-
+        {
+        printf ( "\nFile delete error: %s ( %s )\n", filePath, strerror(errno) );
+        return 3;
+        }
     }
 
 printf( "\n-------------------------------------------------------------------------\n" );
 
-//----------------------------------------------------------------------
 
+//--- Print summary info -----------------------------------------------
 
 //--- Print output parameters, read results ---
 printf( "\nWrite statistics (MBPS):\n" );
@@ -1131,10 +1051,13 @@ calculateStatistics(  readLog, repeats,
 handlerOutput( opb_list, OPB_TABS );
 
 //--- Print application statistics by OS info ---
-printf ( "\nApplication statistics:\n" );
+printf ( "\nLinux system resources usage statistics:\n" );
 printResourceStatistics();
     
 //--- Exit ---
 printf( "\nDone.\n" );
 return 0;
+
 }
+
+
