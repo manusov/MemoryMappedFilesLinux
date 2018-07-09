@@ -1,0 +1,1 @@
+gcc mapblockbench.c -o mapblockbench

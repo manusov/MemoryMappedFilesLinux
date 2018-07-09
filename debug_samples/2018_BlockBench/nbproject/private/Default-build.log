@@ -1,0 +1,1 @@
+cc     blockbench.c   -o blockbench
